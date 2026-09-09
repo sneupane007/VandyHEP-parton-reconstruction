@@ -1,0 +1,31 @@
+# Generated data and trained models — large, reproducible, not source
+data/*
+!data/.gitkeep
+!data/README.md
+checkpoints/*
+!checkpoints/.gitkeep
+!checkpoints/README.md
+*.h5
+*.hdf5
+*.pth
+*.pkl
+
+# Pythia build artifacts
+*.o
+*.so
+*.dylib
+parton_recon/data/generate/build/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+myenv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
