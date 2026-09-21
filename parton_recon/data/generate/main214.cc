@@ -77,7 +77,7 @@ void getHadronLevelEvent( Event& event, Event& hadronLevelEvent) {
 //==========================================================================
 int main() {
   // Number of events, generated and listed ones.
-  int nEvent    = 100;
+  int nEvent    = 1000;
   // Initialize graph objects.
 //   json parton_graphs_json = json::array();
 //   json hadron_graphs_json = json::array();
@@ -125,6 +125,8 @@ int main() {
     // Analyze jet properties and list first few analyses.
     antiKTpartons.analyze(partonLevelEvent);
     antiKThadrons.analyze(hadronLevelEvent);
+    if (antiKTpartons.sizeJet() == 0) continue;
+    if (antiKThadrons.sizeJet() == 0) continue;
     if(antiKTpartons.pT(0) > pTjetMax)
     continue;
     if(antiKTpartons.pT(0) < pTjetMin)
@@ -173,7 +175,7 @@ int main() {
     appendGraphToFile("model1_parton_level_graphs_.json", parton_graph, firstPartonGraph);
     firstPartonGraph = false;
     // parton_graphs_json.push_back(parton_graph);
-    
+
     // if(antiKThadrons.pT(0) > pTjetMax)
     // continue;
     // if(antiKThadrons.pT(0) < pTjetMin)
