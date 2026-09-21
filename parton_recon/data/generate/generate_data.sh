@@ -1,1 +1,1 @@
-g++ main214.cc -o generate $(pythia8-config --cxxflags --ldflags)
+g++ main214.cc -o generate $(path to /pythia8317/bin/pythia8-config --cxxflags --ldflags)

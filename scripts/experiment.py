@@ -33,11 +33,11 @@ def main():
         transform=LogPt(),
     )
     print(f"{len(dataset)} events")
-    for i, sample in enumerate(dataset):
-        print(
-            f"  event {i}: {sample.x.shape[0]:3d} hadrons -> "
-            f"{sample.parton_x.shape[0]:2d} partons, {sample.edge_index.shape[1]:5d} edges"
-        )
+    # for i, sample in enumerate(dataset):
+    #     print(
+    #         f"  event {i}: {sample.x.shape[0]:3d} hadrons -> "
+    #         f"{sample.parton_x.shape[0]:2d} partons, {sample.edge_index.shape[1]:5d} edges"
+    #     )
 
     loader = DataLoader(
         dataset, batch_size=len(dataset), follow_batch=["parton_x"], shuffle=False

@@ -14,6 +14,7 @@ def chamfer_set_loss(pred, true, true_batch):
     nearest truth, and each truth its distance to the nearest prediction. Loops over
     events because batches here are small and the loop reads far better than the
     masked-tensor equivalent.
+    generated with sonnet 5 high
     """
     per_event = []
     for event in range(pred.size(0)):
