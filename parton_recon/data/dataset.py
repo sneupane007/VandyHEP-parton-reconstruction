@@ -37,10 +37,16 @@ class JetPairDataset(Dataset):
 
     def __getitem__(self, i):
         hadron, parton = self.hadron[i], self.parton[i]
+        # A single-hadron event has no edges, so edge_index/edge_features come back as
+        # `[]` rather than `[[i, j], ...]` — reshape before transposing so the tensor
+        # still ends up [2, 0] / [0, 1] instead of the degenerate [0].
         data = Data(
             x=torch.tensor(hadron["node_features"], dtype=torch.float),
-            edge_index=torch.tensor(hadron["edge_index"], dtype=torch.long).t().contiguous(),
-            edge_attr=torch.tensor(hadron["edge_features"], dtype=torch.float),
+            edge_index=torch.tensor(hadron["edge_index"], dtype=torch.long)
+            .reshape(-1, 2)
+            .t()
+            .contiguous(),
+            edge_attr=torch.tensor(hadron["edge_features"], dtype=torch.float).reshape(-1, 1),
             parton_x=torch.tensor(parton["node_features"], dtype=torch.float),
         )
         return data if self.transform is None else self.transform(data)

@@ -45,3 +45,14 @@ class LogPt(BaseTransform):
         data.parton_x = parton_x
 
         return data
+
+    @staticmethod
+    def inverse(tensor):
+        """Undo the log(pT) column on a raw tensor whose last dim is [pT, eta, phi].
+
+        exp() is always positive, so unlike a model without LogPt, no negative-pT clip is
+        needed downstream of this.
+        """
+        tensor = tensor.clone()
+        tensor[..., 0] = torch.exp(tensor[..., 0])
+        return tensor

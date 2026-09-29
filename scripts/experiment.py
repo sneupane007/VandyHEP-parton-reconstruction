@@ -61,12 +61,12 @@ def main():
 
     with torch.no_grad():
         pred = model(batch)
-    event = 0
+    event = 10
     truth = batch.parton_x[batch.parton_x_batch == event]
     print(f"\nevent {event} — true partons (log pT, eta, phi):")
     for row in truth:
         print(f"  {row[0]:8.3f} {row[1]:8.3f} {row[2]:8.3f}")
-    print(f"event {event} — {model.n_slots} predicted slots, nearest {len(truth)} shown:")
+    print(f"event {event} — {model.n_slots} predicted slots, nearest {len(pred[event])} shown:")
     nearest = torch.cdist(truth, pred[event]).min(dim=1).indices
     for row in pred[event][nearest]:
         print(f"  {row[0]:8.3f} {row[1]:8.3f} {row[2]:8.3f}")
