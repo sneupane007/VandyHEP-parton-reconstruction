@@ -1,0 +1,16 @@
+# Pinned direct dependencies for parton_recon, verified on Python 3.12.
+# See README.md "Setup" for per-platform install instructions (CPU / MPS / CUDA).
+#
+# numpy is pinned <2 because `wasserstein` (EnergyFlow's EMD backend) only ships
+# prebuilt wheels through Python 3.12; Python >=3.13 forces a local compile that
+# has been observed to fail EMD calls. Keep numpy/EnergyFlow/wasserstein and the
+# Python version together as a set — don't bump them independently.
+numpy==1.26.4
+torch==2.14.0
+torch_geometric==2.8.0.post1
+EnergyFlow==1.4.0
+wasserstein==1.1.0
+vector==1.9.0
+scipy==1.17.1
+scikit-learn==1.9.1
+matplotlib==3.11.1
