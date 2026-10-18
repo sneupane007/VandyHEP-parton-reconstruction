@@ -9,7 +9,8 @@ this holds out a validation split and saves a checkpoint per checkpoints/README.
 optimizer state, epoch, and a copy of the run's config, in their own timestamped
 directory, plus a training log.
 
-Only chamfer_set_loss exists as a loss so far.
+Currently trains with slot_mse_loss on raw pT (no LogPt); the chamfer_set_loss + LogPt
+lines are commented out beside it.
 
 Trains in mini-batches (default batch size 32) so this scales past whatever fits in one GPU
 batch — see notebooks/01_cluster_gpu_readiness.md task T7. To reproduce the old full-batch
@@ -30,8 +31,11 @@ import torch
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
-from parton_recon.data import JetPairDataset, LogPt
-from parton_recon.losses import chamfer_set_loss
+from parton_recon.data import JetPairDataset
+from parton_recon.data import LogPt
+# from parton_recon.losses import chamfer_set_loss
+from parton_recon.losses import slot_mse_loss
+
 from parton_recon.models import JetGNN
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
@@ -88,7 +92,8 @@ def run_epoch(loader, model, optimizer, device, train):
         n_events = batch.num_graphs
         with torch.set_grad_enabled(train):
             pred = model(batch)
-            loss = chamfer_set_loss(pred, batch.parton_x, batch.parton_x_batch)
+            # loss = chamfer_set_loss(pred, batch.parton_x, batch.parton_x_batch)
+            loss = slot_mse_loss(pred, batch.parton_x, batch.parton_x_batch)
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -105,7 +110,9 @@ def main():
                           else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"device: {device}")
 
+    # slot_mse_loss pads missing particles with pT = 0 in GeV, so no LogPt here.
     dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=LogPt())
+    # dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=None)
     if args.max_events is not None:
         dataset = Subset(dataset, range(min(args.max_events, len(dataset))))
     train_set, val_set = split_dataset(dataset, args.val_fraction, args.seed)
@@ -124,7 +131,8 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     print(f"training {sum(p.numel() for p in model.parameters()):,} parameters, {args.epochs} epochs")
 
-    run_dir = CHECKPOINTS / f"gnn_chamfer_{datetime.now():%Y%m%d_%H%M%S}"
+    # run_dir = CHECKPOINTS / f"gnn_chamfer_{datetime.now():%Y%m%d_%H%M%S}"
+    run_dir = CHECKPOINTS / f"gnn_mse_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "train_log.csv"
     log_path.write_text("epoch,train_loss,val_loss\n")
@@ -150,7 +158,8 @@ def main():
 
     config = dict(
         seed=args.seed, val_fraction=args.val_fraction, epochs=args.epochs, lr=args.lr,
-        batch_size=args.batch_size, loss="chamfer", arch=ARCH,
+        # batch_size=args.batch_size, loss="chamfer", arch=ARCH,
+        batch_size=args.batch_size, loss="mse", arch=ARCH,
         n_train=len(train_set), n_val=len(val_set),
         hadron_json=str(args.hadron_json), parton_json=str(args.parton_json),
         max_events=args.max_events,
