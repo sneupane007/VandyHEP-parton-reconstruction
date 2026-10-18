@@ -43,7 +43,7 @@ FAIR_MAX = 5.5
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkpoint", type=Path, nargs="?",
-                    default=REPO_ROOT / "checkpoints" / "gnn_chamfer_20260928_235508" / "checkpoint_best.pt",
+                    default=REPO_ROOT / "checkpoints" / "gnn_chamfer_20261013_110903" / "checkpoint_best.pt",
                     help="path to a checkpoint_*.pt file (default: the in-progress run)")
     p.add_argument("--hadron-json", type=Path, default=GENERATED / "model1_hadron_level_graphs_.json")
     p.add_argument("--parton-json", type=Path, default=GENERATED / "model1_parton_level_graphs_.json")
@@ -100,7 +100,7 @@ def main():
     model.eval()
     print(f"loaded {args.checkpoint} (epoch {ckpt['epoch']}, val chamfer {ckpt['val_loss']:.4f})")
 
-    dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=LogPt())
+    dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=None)
     val_set = split_dataset(dataset, args.val_fraction, args.seed)
     val_loader = DataLoader(val_set, batch_size=len(val_set), follow_batch=["parton_x"], shuffle=False)
     batch = next(iter(val_loader)).to(device)
@@ -108,35 +108,46 @@ def main():
     with torch.no_grad():
         pred = model(batch)
 
-    pred_events, true_events = to_physical_events(
-        pred, batch.parton_x, batch.parton_x_batch, batch.num_graphs
-    )
 
-    print(f"computing EMD for {len(true_events)} val events (periodic_phi=True)...")
-    raw_emd = dataset_emd(true_events, pred_events, periodic_phi=True, verbose=False)
-    ln_emd = np.log(raw_emd)
+    import math
+    pt = pred[..., 0].clamp(min=0)                       # [B, 24] GeV, no exp
+    true_sum = batch.parton_x[:, 0].sum() / batch.num_graphs
+    print("true mean sum pT per event: %.0f" % true_sum)
+    print("pred pT: median %.2f  max %.1f  negative slots %.1f%%" %
+        (pt.median(), pt.max(), 100 * (pred[..., 0] < 0).float().mean()))
+    sum_pt = pt.sum(dim=1)
+    print("pred sum pT per event: median %.0f  max %.0f  (true ~810)" % (sum_pt.median(), sum_pt.max()))
 
-    n = len(ln_emd)
-    good = int((ln_emd <= GOOD_MAX).sum())
-    fair = int(((ln_emd > GOOD_MAX) & (ln_emd <= FAIR_MAX)).sum())
-    bad = int((ln_emd > FAIR_MAX).sum())
-    print(f"mean ln(EMD) {ln_emd.mean():.2f}, median {np.median(ln_emd):.2f}")
-    print("------------------------------------------------------------------")
-    print(f"good (<={GOOD_MAX:.1f}): {good}/{n} ({100*good/n:.0f}%)  "
-          f"fair ({GOOD_MAX:.1f}-{FAIR_MAX:.1f}): {fair}/{n} ({100*fair/n:.0f}%)  "
-          f"bad (>{FAIR_MAX:.1f}): {bad}/{n} ({100*bad/n:.0f}%)")
 
-    fig, ax = plt.subplots(figsize=(7, 5))
-    ax.hist(ln_emd, bins=min(15, max(5, n // 2)), color="#4C72B0", edgecolor="white")
-    ax.axvline(GOOD_MAX, color="seagreen", linestyle="--", label=f"good <= {GOOD_MAX:.1f}")
-    ax.axvline(FAIR_MAX, color="darkorange", linestyle="--", label=f"fair <= {FAIR_MAX:.1f}")
-    ax.set_xlabel("ln(EMD)")
-    ax.set_ylabel("events")
-    ax.set_title(f"EMD: predicted vs. true partons\n{n} val events, checkpoint epoch {ckpt['epoch']}")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
-    print(f"saved plot to {out_path}")
+    # pred_events, true_events = to_physical_events(
+    #     pred, batch.parton_x, batch.parton_x_batch, batch.num_graphs
+    # )
+
+    # print(f"computing EMD for {len(true_events)} val events (periodic_phi=True)...")
+    # raw_emd = dataset_emd(true_events, pred_events, periodic_phi=True, verbose=False)
+    # ln_emd = np.log(raw_emd)
+
+    # n = len(ln_emd)
+    # good = int((ln_emd <= GOOD_MAX).sum())
+    # fair = int(((ln_emd > GOOD_MAX) & (ln_emd <= FAIR_MAX)).sum())
+    # bad = int((ln_emd > FAIR_MAX).sum())
+    # print(f"mean ln(EMD) {ln_emd.mean():.2f}, median {np.median(ln_emd):.2f}")
+    # print("------------------------------------------------------------------")
+    # print(f"good (<={GOOD_MAX:.1f}): {good}/{n} ({100*good/n:.0f}%)  "
+    #       f"fair ({GOOD_MAX:.1f}-{FAIR_MAX:.1f}): {fair}/{n} ({100*fair/n:.0f}%)  "
+    #       f"bad (>{FAIR_MAX:.1f}): {bad}/{n} ({100*bad/n:.0f}%)")
+
+    # fig, ax = plt.subplots(figsize=(7, 5))
+    # ax.hist(ln_emd, bins=min(15, max(5, n // 2)), color="#4C72B0", edgecolor="white")
+    # ax.axvline(GOOD_MAX, color="seagreen", linestyle="--", label=f"good <= {GOOD_MAX:.1f}")
+    # ax.axvline(FAIR_MAX, color="darkorange", linestyle="--", label=f"fair <= {FAIR_MAX:.1f}")
+    # ax.set_xlabel("ln(EMD)")
+    # ax.set_ylabel("events")
+    # ax.set_title(f"EMD: predicted vs. true partons\n{n} val events, checkpoint epoch {ckpt['epoch']}")
+    # ax.legend()
+    # fig.tight_layout()
+    # fig.savefig(out_path, dpi=150)
+    # print(f"saved plot to {out_path}")
 
 
 if __name__ == "__main__":
