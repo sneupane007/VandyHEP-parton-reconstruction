@@ -3,12 +3,11 @@
 Reconstructing parton-level jet constituents from hadron-level constituents, using a graph neural
 network.
 
-Data comes from Pythia 8 (`qg → qγ`, anti-kT R=0.8 jets). See `parton_recon/data/generate/`.
+Data comes from Pythia 8. See `parton_recon/data/generate/`.
 
 ## Status
 
 **Skeleton and a few scripts.** Directories exist with a stated purpose; few code, basic environment, few data for experimentation.
-Direction is pending a conversation with Dr. Rithya — see "Open questions" below.
 
 ## Background
 
@@ -41,15 +40,4 @@ not built on, for these reasons:
 
 Note: `data/` at the top level holds generated datasets and is gitignored. `parton_recon/data/` is
 the Python module that reads and writes them. Different things, similar names.
-
-## Open questions for the professor
-
-
-1. **Is regression the right framing?** Hadronization is stochastic, so the parton→hadron map is a
-   distribution rather than a function. An MSE-trained regressor targets the conditional mean, which
-   may not be a physically valid configuration.
-2. **Should EMD be the training objective**, or stay an evaluation metric as it was previously?
-3. **Is the 800–820 GeV jet window a deliberate control**, or should it widen for generalisation?
-4. **What counts as success?** No target metric was recorded anywhere in the prior work.
-
 
