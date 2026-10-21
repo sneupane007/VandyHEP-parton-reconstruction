@@ -34,6 +34,15 @@ void closeJsonArray(const std::string& file_path) {
     file.close();
 }
 using namespace Pythia8;
+// The hard-process photon of qg -> q gamma. Its top copy is the status -23 outgoing
+// particle of the hard process; photons from hadron decays or shower radiation are not.
+bool isPromptPhoton(const Event& event, int i) {
+  if (event[i].id() != 22) return false;
+  return event[event[i].iTopCopyId()].statusAbs() == 23;
+}
+// Set by main(): drop the prompt photon from both levels before jet finding.
+bool vetoPromptPhoton = true;
+//==========================================================================
 // Generic routine to extract the particles that existed right before
 // the hadronization machinery was invoked.
 void getPartonLevelEvent(Event& event, Event& partonLevelEvent) {
@@ -42,6 +51,7 @@ void getPartonLevelEvent(Event& event, Event& partonLevelEvent) {
   for (int i = 0; i < event.size(); ++i)
   if (event[i].isFinalPartonLevel()) {
     //  if (abs(event[i].eta()) > 2.5) continue;
+    if (vetoPromptPhoton && isPromptPhoton(event, i)) continue;
     int iNew = partonLevelEvent.append( event[i] );
     // Set copied properties more appropriately: positive status,
     // original location as "mother", and with no daughters.
@@ -66,6 +76,8 @@ void getHadronLevelEvent( Event& event, Event& hadronLevelEvent) {
     if (idAbs == 12 || idAbs == 14 || idAbs == 16) accept = false;
     // Reject particles with pT < 0.1 GeV.
     if (event[i].pT() < 0.1) accept = false;
+    // Reject the prompt photon, so the leading jet is the recoiling quark/gluon jet.
+    if (vetoPromptPhoton && isPromptPhoton(event, i)) accept = false;
     // if (abs(event[i].eta()) > 2.5) accept = false;
     // Copy over accepted particles, with original location as "mother".
     if (accept) {
@@ -75,9 +87,19 @@ void getHadronLevelEvent( Event& event, Event& hadronLevelEvent) {
   }
 }
 //==========================================================================
-int main() {
+int main(int argc, char* argv[]) {
+  // Usage: ./generate [nEvent] [seed] [outPrefix] [vetoAndMatch]
+  // vetoAndMatch = 1 (default): drop the prompt photon and take the hadron jet that is
+  // dR-matched to the leading parton jet. 0 reproduces the original (pre-Oct-20) selection:
+  // photon kept, leading hadron jet taken regardless of where it points.
   // Number of events, generated and listed ones.
-  int nEvent    = 1000;
+  int nEvent    = (argc > 1) ? std::atoi(argv[1]) : 1000;
+  int seed      = (argc > 2) ? std::atoi(argv[2]) : -1;   // -1 = Pythia default seed
+  std::string prefix = (argc > 3) ? argv[3] : "model1";
+  const std::string partonFile = prefix + "_parton_level_graphs_.json";
+  const std::string hadronFile = prefix + "_hadron_level_graphs_.json";
+  bool matchJets = (argc > 4) ? std::atoi(argv[4]) != 0 : true;
+  vetoPromptPhoton = matchJets;
   // Initialize graph objects.
 //   json parton_graphs_json = json::array();
 //   json hadron_graphs_json = json::array();
@@ -90,6 +112,10 @@ int main() {
   pythia.readString("Next:numberShowInfo = 0");
   pythia.readString("Next:numberShowProcess = 0");
   pythia.readString("Next:numberShowEvent = 0");
+  if (seed >= 0) {
+    pythia.readString("Random:setSeed = on");
+    pythia.readString("Random:seed = " + std::to_string(seed));
+  }
   // If Pythia fails to initialize, exit with error.
   if (!pythia.init()) return 1;
   // Parton and Hadron Level event records. Remeber to initalize.
@@ -104,9 +130,11 @@ int main() {
   double pTjetMax = 820.0; // Max jet pT.
   double etaMax = 2.5;  // Pseudorapidity range of detector.
   int select = 1;       // Include all visibile particles (e.g. exclude neutrinos)
+  double dRMatchMax = 0.4;        // Max dR(hadron jet, parton jet) for a match.
+  double pTjetMinHadron = 600.0;  // Looser, so the matched hadron jet is found even if hadronization moves it below 800.
   // Set up anti-kT clustering, comparing parton and hadron levels.
   SlowJet antiKTpartons(power, radius, pTjetMin, etaMax, select);
-  SlowJet antiKThadrons(power, radius, pTjetMin, etaMax, select);
+  SlowJet antiKThadrons(power, radius, matchJets ? pTjetMinHadron : pTjetMin, etaMax, select);
   bool firstHadronGraph = true;
   bool firstPartonGraph = true;
   // Begin event loop. Generate event. Skip if error.
@@ -131,6 +159,20 @@ int main() {
     continue;
     if(antiKTpartons.pT(0) < pTjetMin)
     continue;
+    // Hadron jet to pair with the leading parton jet: the leading one (original), or the
+    // closest one in (y, phi) within dRMatchMax (matchJets).
+    int iHad = 0;
+    if (matchJets) {
+      iHad = -1;
+      double dRBest = dRMatchMax;
+      for (int j = 0; j < antiKThadrons.sizeJet(); ++j) {
+        double dPhi = abs(antiKThadrons.phi(j) - antiKTpartons.phi(0));
+        if (dPhi > M_PI) dPhi = 2. * M_PI - dPhi;
+        double dR = sqrt(pow2(antiKThadrons.y(j) - antiKTpartons.y(0)) + pow2(dPhi));
+        if (dR < dRBest) { dRBest = dR; iHad = j; }
+      }
+      if (iHad < 0) continue;
+    }
 
    
 
@@ -172,7 +214,7 @@ int main() {
             //std::cout << " \n\n\n parton node features size: " << parton_node_features.size() << std::endl;
         }
     json parton_graph = createGraph(parton_node_features, parton_edge_index, parton_edge_features);
-    appendGraphToFile("model1_parton_level_graphs_.json", parton_graph, firstPartonGraph);
+    appendGraphToFile(partonFile, parton_graph, firstPartonGraph);
     firstPartonGraph = false;
     // parton_graphs_json.push_back(parton_graph);
 
@@ -185,9 +227,9 @@ int main() {
     // continue;
     // if(antiKThadrons.pT(0) < pTjetMin)
     // continue;
-    std::cout << "Leading hadron jet [pT,eta,phi]: [" << antiKThadrons.pT(0) <<", " << antiKThadrons.y(0) << ", " << antiKThadrons.phi(0) << "]" << std::endl;
+    std::cout << "Leading hadron jet [pT,eta,phi]: [" << antiKThadrons.pT(iHad) <<", " << antiKThadrons.y(iHad) << ", " << antiKThadrons.phi(iHad) << "]" << std::endl;
 
-    for (auto i : antiKThadrons.constituents(0)) {
+    for (auto i : antiKThadrons.constituents(iHad)) {
             std::vector<float> features;
             // Add particle properties to the node feature matrix
             // features.push_back(hadronLevelEvent[i].m());
@@ -201,10 +243,10 @@ int main() {
             hadron_node_features.push_back(features);
             // Fastjet returns pythia event indices; convert them to 1, 2, ... , n
             map<int, int> transform;
-            for (size_t idx = 0; idx < antiKThadrons.constituents(0).size(); ++idx) {
-              transform[antiKThadrons.constituents(0)[idx]] = idx;
+            for (size_t idx = 0; idx < antiKThadrons.constituents(iHad).size(); ++idx) {
+              transform[antiKThadrons.constituents(iHad)[idx]] = idx;
             }
-            for (auto j : antiKThadrons.constituents(0)) {
+            for (auto j : antiKThadrons.constituents(iHad)) {
                 // All nodes i are connected to all other nodes j != i
                 if (i == j)
                     continue;
@@ -222,13 +264,13 @@ int main() {
             }
         }
         json hadron_graph = createGraph(hadron_node_features, hadron_edge_index, hadron_edge_features);
-        appendGraphToFile("model1_hadron_level_graphs_.json", hadron_graph, firstHadronGraph);
+        appendGraphToFile(hadronFile, hadron_graph, firstHadronGraph);
         firstHadronGraph = false;
         // hadron_graphs_json.push_back(hadron_graph);
   // End of event loop.
   }
-  closeJsonArray("model1_parton_level_graphs_.json");
-  closeJsonArray("model1_hadron_level_graphs_.json");
+  closeJsonArray(partonFile);
+  closeJsonArray(hadronFile);
   // closeJsonArray("default_parton_level_graphs.json");
   // closeJsonArray("default_hadron_level_graphs.json");
     // std::ofstream parton_file("parton_level_graphs.json");

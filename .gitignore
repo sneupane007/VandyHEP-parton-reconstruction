@@ -30,3 +30,6 @@ myenv/
 .vscode/
 .idea/
 pythia8316/*
+
+# SLURM job logs
+slurm/logs/
