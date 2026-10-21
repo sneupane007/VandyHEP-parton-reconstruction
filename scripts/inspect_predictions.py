@@ -22,7 +22,7 @@ from scipy.optimize import linear_sum_assignment
 from torch_geometric.loader import DataLoader
 
 from parton_recon.data import JetPairDataset, LogPt
-from parton_recon.models import JetGNN
+from parton_recon.models import build_model
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 
@@ -46,7 +46,7 @@ def wrap_phi(phi):
 def main():
     args = parse_args()
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    model = JetGNN(**ckpt["arch_config"])
+    model = build_model(ckpt["arch_config"])
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 

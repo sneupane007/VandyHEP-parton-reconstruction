@@ -30,7 +30,7 @@ from torch_geometric.loader import DataLoader
 
 from parton_recon.data import JetPairDataset, LogPt
 from parton_recon.metrics.emd import dataset_emd
-from parton_recon.models import JetGNN
+from parton_recon.models import build_model
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 
@@ -95,7 +95,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available()
                           else "mps" if torch.backends.mps.is_available() else "cpu")
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
-    model = JetGNN(**ckpt["arch_config"]).to(device)
+    model = build_model(ckpt["arch_config"]).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     print(f"loaded {args.checkpoint} (epoch {ckpt['epoch']}, val chamfer {ckpt['val_loss']:.4f})")
