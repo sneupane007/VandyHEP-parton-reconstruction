@@ -13,6 +13,8 @@ Operates on physical-space particles — [pT, eta, phi]. Undo any `LogPt` transf
 before calling these.
 """
 
+import sys
+
 import numpy as np
 import energyflow
 import wasserstein
@@ -21,7 +23,9 @@ import wasserstein
 # `dlopen` on macOS even with Homebrew's libomp installed (symbol not found:
 # '___kmpc_barrier'). Switching to the non-OpenMP backend is a one-line workaround, done
 # once here so callers don't need to know about it. See notebooks/03_emd_metric.md.
-wasserstein.without_openmp()
+# macOS only: the Linux wheels ship just the OpenMP build, so there is nothing to switch to.
+if sys.platform == "darwin":
+    wasserstein.without_openmp()
 
 
 def event_emd(true_particles, pred_particles, **kwargs):
