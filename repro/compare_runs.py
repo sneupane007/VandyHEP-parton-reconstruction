@@ -17,7 +17,7 @@ from torch_geometric.loader import DataLoader
 from evaluate import split_dataset, wrap_phi
 from parton_recon.data import JetPairDataset, LogPt
 from parton_recon.metrics.emd import event_emd
-from parton_recon.models import build_model
+from parton_recon.models import build_model, predict_batched
 
 
 def run_emds(run):
@@ -28,7 +28,7 @@ def run_emds(run):
     b = next(iter(DataLoader(split_dataset(ds, cfg["val_fraction"], cfg["seed"]),
                              batch_size=10**6, follow_batch=["parton_x"])))
     with torch.no_grad():
-        pred = LogPt.inverse(m(b))
+        pred = LogPt.inverse(predict_batched(m, b))
     pred[..., 2] = wrap_phi(pred[..., 2])
     true, tb = LogPt.inverse(b.parton_x), b.parton_x_batch
     pairs = [(true[tb == i].numpy(), pred[i].numpy()) for i in range(b.num_graphs)]

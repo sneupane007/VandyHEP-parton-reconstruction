@@ -5,6 +5,9 @@ summing to 1, plus eta/phi per slot) and its total pT (as a correction to the ha
 sum) separately, trained with matched_fraction_loss. Everything else is identical.
 
 Run from the repo root:  .venv/bin/python3 scripts/train_factorized.py [--epochs N] [--n-slots K] ...
+  --model attention  uses AttentionJetGNN (cross-attention slot decoder) instead; its size
+  is set by --hidden/--heads/--n-conv/--n-dec, and --absolute turns off jet-axis-relative
+  coordinates.
 Run `--help` for the full list of flags (data paths, epochs, batch size, lr, val split, seed).
 
 Unlike experiment.py (a plumbing smoke test with no held-out data),
@@ -39,7 +42,7 @@ from parton_recon.data import JetPairDataset
 from parton_recon.data import LogPt
 from parton_recon.losses import matched_fraction_loss
 
-from parton_recon.models import FactorizedJetGNN
+from parton_recon.models import build_model
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 CHECKPOINTS = REPO_ROOT / "checkpoints"
@@ -62,6 +65,15 @@ def parse_args():
     p.add_argument("--n-slots", type=int, default=24)
     p.add_argument("--energy-weight", type=float, default=1.0,
                     help="weight of the total-pT term relative to the shape term")
+    p.add_argument("--model", choices=["factorized", "attention"], default="factorized")
+    p.add_argument("--hidden", type=int, default=None,
+                    help="hidden width (default 64 for factorized, 128 for attention)")
+    p.add_argument("--heads", type=int, default=4, help="attention only")
+    p.add_argument("--n-conv", type=int, default=3, help="attention only: GATv2 layers")
+    p.add_argument("--n-dec", type=int, default=3, help="attention only: decoder layers")
+    p.add_argument("--dropout", type=float, default=0.1, help="attention only")
+    p.add_argument("--absolute", action="store_true",
+                    help="attention only: absolute eta/phi instead of offsets from the jet axis")
     return p.parse_args()
 
 
@@ -133,11 +145,19 @@ def main():
     )
 
     ARCH["n_slots"] = args.n_slots
-    model = FactorizedJetGNN(**{k: v for k, v in ARCH.items() if k != "model"}).to(device)
+    if args.model == "attention":
+        ARCH.update(model="AttentionJetGNN", hidden=args.hidden or 128, heads=args.heads,
+                    n_conv=args.n_conv, n_dec=args.n_dec, dropout=args.dropout,
+                    relative=not args.absolute)
+    elif args.hidden is not None:
+        ARCH["hidden"] = args.hidden
+    model = build_model(ARCH).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     print(f"training {sum(p.numel() for p in model.parameters()):,} parameters, {args.epochs} epochs")
 
-    run_dir = CHECKPOINTS / f"gnn_factorized_k{args.n_slots}_{datetime.now():%Y%m%d_%H%M%S}"
+    name = (f"gnn_attn{'abs' if args.absolute else 'rel'}_h{ARCH['hidden']}_k{args.n_slots}"
+            if args.model == "attention" else f"gnn_factorized_k{args.n_slots}")
+    run_dir = CHECKPOINTS / f"{name}_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True)
     log_path = run_dir / "train_log.csv"
     log_path.write_text("epoch,train_loss,val_loss,train_shape,val_shape,train_energy,val_energy\n")

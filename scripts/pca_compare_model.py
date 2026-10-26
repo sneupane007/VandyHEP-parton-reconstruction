@@ -29,7 +29,7 @@ from torch_geometric.loader import DataLoader
 
 from evaluate import split_dataset, wrap_phi
 from parton_recon.data import JetPairDataset, LogPt
-from parton_recon.models import build_model
+from parton_recon.models import build_model, predict_batched
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 N_COMPONENTS = 5
@@ -121,7 +121,7 @@ def main():
 
     batch = next(iter(DataLoader(val_set, batch_size=len(val_set), shuffle=False))).to(device)
     with torch.no_grad():
-        pred = LogPt.inverse(model(batch))
+        pred = LogPt.inverse(predict_batched(model, batch))
     pred[..., 2] = wrap_phi(pred[..., 2])
     pred_events = [pred[i].cpu().numpy() for i in range(pred.shape[0])]
 

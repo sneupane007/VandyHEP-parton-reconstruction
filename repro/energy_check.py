@@ -17,7 +17,7 @@ from torch_geometric.loader import DataLoader
 from evaluate import split_dataset, wrap_phi
 from parton_recon.data import JetPairDataset, LogPt
 from parton_recon.metrics.emd import event_emd
-from parton_recon.models import build_model
+from parton_recon.models import build_model, predict_batched
 
 ck = torch.load(sys.argv[1], map_location="cpu", weights_only=False)
 pre = sys.argv[2] if len(sys.argv) > 2 else "data/repro6725"
@@ -25,7 +25,7 @@ m = build_model(ck["arch_config"]); m.load_state_dict(ck["model_state_dict"]); m
 ds = JetPairDataset(pre + "_hadron_level_graphs_.json", pre + "_parton_level_graphs_.json", transform=LogPt())
 b = next(iter(DataLoader(split_dataset(ds, 0.2, 0), batch_size=10**6, follow_batch=["parton_x"])))
 with torch.no_grad():
-    pred = LogPt.inverse(m(b))
+    pred = LogPt.inverse(predict_batched(m, b))
 pred[..., 2] = wrap_phi(pred[..., 2])
 true, tb = LogPt.inverse(b.parton_x), b.parton_x_batch
 n = b.num_graphs

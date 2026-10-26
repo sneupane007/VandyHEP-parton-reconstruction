@@ -22,7 +22,7 @@ from scipy.optimize import linear_sum_assignment
 from torch_geometric.loader import DataLoader
 
 from parton_recon.data import JetPairDataset, LogPt
-from parton_recon.models import build_model
+from parton_recon.models import build_model, predict_batched
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 
@@ -57,7 +57,7 @@ def main():
     batch = next(iter(DataLoader(val_set, batch_size=len(val_set), follow_batch=["parton_x"])))
 
     with torch.no_grad():
-        pred = LogPt.inverse(model(batch)).numpy()                          # [B, K, 3] physical
+        pred = LogPt.inverse(predict_batched(model, batch)).numpy()                          # [B, K, 3] physical
     true = LogPt.inverse(batch.parton_x).numpy()
     tb = batch.parton_x_batch.numpy()
     B, K, _ = pred.shape

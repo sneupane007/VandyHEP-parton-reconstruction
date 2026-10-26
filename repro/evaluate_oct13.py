@@ -30,7 +30,7 @@ from torch_geometric.loader import DataLoader
 
 from parton_recon.data import JetPairDataset, LogPt
 from parton_recon.metrics.emd import dataset_emd
-from parton_recon.models import build_model
+from parton_recon.models import build_model, predict_batched
 
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 
@@ -106,7 +106,7 @@ def main():
     batch = next(iter(val_loader)).to(device)
 
     with torch.no_grad():
-        pred = model(batch)
+        pred = predict_batched(model, batch)
 
     pred_events, true_events = to_physical_events(
         pred, batch.parton_x, batch.parton_x_batch, batch.num_graphs
