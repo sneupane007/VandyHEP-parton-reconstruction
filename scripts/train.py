@@ -115,6 +115,8 @@ def main():
     # dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=None)
     if args.max_events is not None:
         dataset = Subset(dataset, range(min(args.max_events, len(dataset))))
+    # Convert every event from JSON to tensors once here, instead of redoing it every epoch.
+    dataset = [dataset[i] for i in range(len(dataset))]
     train_set, val_set = split_dataset(dataset, args.val_fraction, args.seed)
     print(f"{len(dataset)} events -> {len(train_set)} train / {len(val_set)} val, "
           f"batch size {args.batch_size}")
