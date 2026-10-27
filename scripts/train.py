@@ -9,8 +9,10 @@ this holds out a validation split and saves a checkpoint per checkpoints/README.
 optimizer state, epoch, and a copy of the run's config, in their own timestamped
 directory, plus a training log.
 
-Currently trains with slot_mse_loss on raw pT (no LogPt); the chamfer_set_loss + LogPt
-lines are commented out beside it.
+Currently trains with slot_mse_loss under LogPt; switch transform and empty-slot target
+together with the TRANSFORM, PAD_PT toggle below. The chamfer_set_loss lines are commented
+out beside it. Everything that shapes a run (transform, empty-slot target, architecture,
+optimizer, ...) is written to config.json in the run directory when training starts.
 
 Trains in mini-batches (default batch size 32) so this scales past whatever fits in one GPU
 batch — see notebooks/01_cluster_gpu_readiness.md task T7. To reproduce the old full-batch
@@ -19,6 +21,7 @@ behavior on a small dataset, pass --batch-size >= the number of training events.
 
 import argparse
 import json
+import math
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -41,7 +44,11 @@ from parton_recon.models import JetGNN
 GENERATED = REPO_ROOT / "parton_recon" / "data" / "generate"
 CHECKPOINTS = REPO_ROOT / "checkpoints"
 
-ARCH = dict(in_channels=3, hidden=64, n_slots=24, out_channels=3)
+ARCH = dict(in_channels=3, hidden=64, n_slots=24, out_channels=3, relative_angles=True)
+
+# Toggle as a pair: the empty-slot pT target must be in the same pT space as the transform.
+TRANSFORM, PAD_PT = LogPt(), math.log(0.01)   # log(pT); empty slots trained toward 0.01 GeV
+# TRANSFORM, PAD_PT = None, 0.0                # raw GeV; empty slots trained toward 0 GeV
 
 
 def parse_args():
@@ -93,7 +100,7 @@ def run_epoch(loader, model, optimizer, device, train):
         with torch.set_grad_enabled(train):
             pred = model(batch)
             # loss = chamfer_set_loss(pred, batch.parton_x, batch.parton_x_batch)
-            loss = slot_mse_loss(pred, batch.parton_x, batch.parton_x_batch)
+            loss = slot_mse_loss(pred, batch.parton_x, batch.parton_x_batch, pad_pt=PAD_PT)
         if train:
             optimizer.zero_grad()
             loss.backward()
@@ -110,9 +117,7 @@ def main():
                           else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"device: {device}")
 
-    # slot_mse_loss pads missing particles with pT = 0 in GeV, so no LogPt here.
-    dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=LogPt())
-    # dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=None)
+    dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=TRANSFORM)
     if args.max_events is not None:
         dataset = Subset(dataset, range(min(args.max_events, len(dataset))))
     # Convert every event from JSON to tensors once here, instead of redoing it every epoch.
@@ -136,6 +141,20 @@ def main():
     # run_dir = CHECKPOINTS / f"gnn_chamfer_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir = CHECKPOINTS / f"gnn_mse_{datetime.now():%Y%m%d_%H%M%S}"
     run_dir.mkdir(parents=True)
+
+    # Written up front so even an interrupted run records how it was trained.
+    config = dict(
+        seed=args.seed, val_fraction=args.val_fraction, epochs=args.epochs, lr=args.lr,
+        # batch_size=args.batch_size, loss="chamfer", arch=ARCH,
+        batch_size=args.batch_size, loss="mse", arch=ARCH,
+        transform=str(TRANSFORM), pad_pt=PAD_PT, optimizer=type(optimizer).__name__,
+        device=str(device),
+        n_train=len(train_set), n_val=len(val_set),
+        hadron_json=str(args.hadron_json), parton_json=str(args.parton_json),
+        max_events=args.max_events,
+    )
+    (run_dir / "config.json").write_text(json.dumps(config, indent=2))
+
     log_path = run_dir / "train_log.csv"
     log_path.write_text("epoch,train_loss,val_loss\n")
 
@@ -157,16 +176,6 @@ def main():
 
     save_checkpoint(run_dir / "checkpoint_final.pt", args.epochs, model, optimizer,
                      train_loss, val_loss)
-
-    config = dict(
-        seed=args.seed, val_fraction=args.val_fraction, epochs=args.epochs, lr=args.lr,
-        # batch_size=args.batch_size, loss="chamfer", arch=ARCH,
-        batch_size=args.batch_size, loss="mse", arch=ARCH,
-        n_train=len(train_set), n_val=len(val_set),
-        hadron_json=str(args.hadron_json), parton_json=str(args.parton_json),
-        max_events=args.max_events,
-    )
-    (run_dir / "config.json").write_text(json.dumps(config, indent=2))
 
     print(f"\nbest val loss {best_val:.4f} (epoch of best checkpoint recorded inside it)")
     print(f"saved to {run_dir}")
