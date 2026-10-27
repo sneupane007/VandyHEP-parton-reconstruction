@@ -1,6 +1,6 @@
 """Fixed-slot mean squared error — the baseline objective that needs a slot-to-particle pairing."""
 
-import torch
+from torch_geometric.utils import to_dense_batch
 
 
 def slot_mse_loss(pred, true, true_batch):
@@ -19,18 +19,20 @@ def slot_mse_loss(pred, true, true_batch):
     The padding target of pT = 0 is physical GeV. Do not combine with LogPt: log(0) is
     -inf and a log-space zero means 1 GeV. Train without the transform.
     """
-    per_event = []
-    for event in range(pred.size(0)):
-        target = true[true_batch == event]
-        target = target[target[:, 0].argsort(descending=True)][: pred.size(1)]
-        n = target.size(0)
+    B, K, F = pred.shape
+    # Sort all partons in the batch by pT (highest first), then regroup them by event.
+    # The second sort is stable, so each event's partons stay in pT order.
+    order = true[:, 0].argsort(descending=True, stable=True)
+    true, true_batch = true[order], true_batch[order]
+    order = true_batch.argsort(stable=True)
+    true, true_batch = true[order], true_batch[order]
 
-        padded = torch.zeros_like(pred[event])
-        padded[:n] = target
-        mask = torch.zeros_like(pred[event])
-        mask[:n] = 1.0
-        mask[:, 0] = 1.0
+    # [B, K, F] target: each event's partons in slots 0..n-1, zeros after, anything past K dropped.
+    padded, present = to_dense_batch(true, true_batch, batch_size=B, max_num_nodes=K)
 
-        squared_error = (pred[event] - padded) ** 2 * mask
-        per_event.append(squared_error.sum() / mask.sum())
-    return torch.stack(per_event).mean()
+    # Real slots: all three features count. Empty slots: only pT counts.
+    mask = present.to(pred.dtype).unsqueeze(-1).repeat(1, 1, F)
+    mask[:, :, 0] = 1.0
+
+    squared_error = (pred - padded) ** 2 * mask
+    return (squared_error.sum(dim=(1, 2)) / mask.sum(dim=(1, 2))).mean()
