@@ -28,5 +28,8 @@ myenv/
 # Editors / OS
 .DS_Store
 .vscode/
+<<<<<<< Updated upstream
 .idea/
 pythia8316/*
+=======
+>>>>>>> Stashed changes
