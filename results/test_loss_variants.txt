@@ -1,0 +1,7 @@
+5985 test events (data/veto_test.npz); true parton mass median 73.3 GeV, hadron-vs-parton mass corr 0.974
+run                                epoch  ln(EMD)    good   shape    pT r     dm/m         16-84% m corr
+Attention rel (baseline)              71     3.11     89%   0.025   1.001   -0.230 [-0.40, -0.06]  0.952
++ pT-weighted angles                  28     3.12     93%   0.025   1.001   -0.374 [-0.60, -0.15]  0.959
++ mass 0.03                          130     3.36     87%   0.033   1.003   +0.001 [-0.15, +0.17]  0.968
++ pT-weighted + mass 0.03             65     3.30     90%   0.031   1.002   -0.058 [-0.21, +0.11]  0.962
++ pT-weighted + mass 0.1              68     3.39     78%   0.034   1.002   -0.030 [-0.17, +0.17]  0.964
