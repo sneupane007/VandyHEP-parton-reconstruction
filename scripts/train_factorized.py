@@ -8,6 +8,12 @@ Run from the repo root:  .venv/bin/python3 scripts/train_factorized.py [--epochs
   --model attention  uses AttentionJetGNN (cross-attention slot decoder) instead; its size
   is set by --hidden/--heads/--n-conv/--n-dec, and --absolute turns off jet-axis-relative
   coordinates.
+
+Loss options (matched_fraction_loss): --angle-weight pt weights each true parton's eta/phi
+error by its pT fraction; --mass-weight L adds L * (log m_pred - log m_true)^2. --hadron-json
+can be a compact .npz from scripts/convert_to_arrays.py (then pass the same path, or omit
+--parton-json). --patience N stops after N epochs without a new best val loss. A long run
+killed by the wall-clock limit continues with --resume checkpoints/<run_dir>.
 Run `--help` for the full list of flags (data paths, epochs, batch size, lr, val split, seed).
 
 Unlike experiment.py (a plumbing smoke test with no held-out data),
@@ -74,7 +80,20 @@ def parse_args():
     p.add_argument("--dropout", type=float, default=0.1, help="attention only")
     p.add_argument("--absolute", action="store_true",
                     help="attention only: absolute eta/phi instead of offsets from the jet axis")
-    return p.parse_args()
+    p.add_argument("--angle-weight", choices=["uniform", "pt"], default="uniform")
+    p.add_argument("--mass-weight", type=float, default=0.0)
+    p.add_argument("--patience", type=int, default=0, help="early-stop patience in epochs (0 = off)")
+    p.add_argument("--workers", type=int, default=0, help="DataLoader worker processes")
+    p.add_argument("--tag", default="", help="appended to the run directory name")
+    p.add_argument("--resume", type=Path, default=None,
+                    help="run directory to continue; all other arguments are taken from its run_args.json")
+    args = p.parse_args()
+    if args.resume is not None:
+        saved = json.loads((args.resume / "run_args.json").read_text())
+        args = argparse.Namespace(**{**saved, "resume": args.resume})
+        for key in ("hadron_json", "parton_json"):
+            args.__dict__[key] = Path(args.__dict__[key]) if args.__dict__[key] else None
+    return args
 
 
 def split_dataset(dataset, val_fraction, seed):
@@ -86,7 +105,7 @@ def split_dataset(dataset, val_fraction, seed):
     return Subset(dataset, train_idx.tolist()), Subset(dataset, val_idx.tolist())
 
 
-def save_checkpoint(path, epoch, model, optimizer, train_loss, val_loss):
+def save_checkpoint(path, epoch, model, optimizer, train_loss, val_loss, **extra):
     torch.save(
         {
             "epoch": epoch,
@@ -95,31 +114,30 @@ def save_checkpoint(path, epoch, model, optimizer, train_loss, val_loss):
             "arch_config": ARCH,
             "train_loss": train_loss,
             "val_loss": val_loss,
+            **extra,
         },
         path,
     )
 
 
-def run_epoch(loader, model, optimizer, device, train, energy_weight):
-    """One pass over `loader`. Returns (loss, shape, energy), each averaged per event (not
-    per batch), so they're comparable across runs with different batch sizes."""
+def run_epoch(loader, model, optimizer, device, train, loss_kwargs):
+    """One pass over `loader`. Returns (loss, shape, energy, mass), each averaged per event
+    (not per batch), so they're comparable across runs with different batch sizes."""
     model.train(train)
-    total_loss, total_shape, total_energy, total_events = 0.0, 0.0, 0.0, 0
+    totals, total_events = np.zeros(4), 0
     for batch in loader:
         batch = batch.to(device)
         n_events = batch.num_graphs
         with torch.set_grad_enabled(train):
-            loss, shape, energy = matched_fraction_loss(
-                model.parts(batch), batch.parton_x, batch.parton_x_batch, energy_weight)
+            terms = matched_fraction_loss(
+                model.parts(batch), batch.parton_x, batch.parton_x_batch, **loss_kwargs)
         if train:
             optimizer.zero_grad()
-            loss.backward()
+            terms[0].backward()
             optimizer.step()
-        total_loss += loss.item() * n_events
-        total_shape += shape.item() * n_events
-        total_energy += energy.item() * n_events
+        totals += np.array([t.item() for t in terms]) * n_events
         total_events += n_events
-    return total_loss / total_events, total_shape / total_events, total_energy / total_events
+    return tuple(totals / total_events)
 
 
 def main():
@@ -129,6 +147,8 @@ def main():
                           else "mps" if torch.backends.mps.is_available() else "cpu")
     print(f"device: {device}")
 
+    if str(args.hadron_json).endswith(".npz") and args.parton_json == GENERATED / "model1_parton_level_graphs_.json":
+        args.parton_json = args.hadron_json       # .npz holds both levels; the JSON default does not apply
     dataset = JetPairDataset(args.hadron_json, args.parton_json, transform=LogPt())
     if args.max_events is not None:
         dataset = Subset(dataset, range(min(args.max_events, len(dataset))))
@@ -136,12 +156,14 @@ def main():
     print(f"{len(dataset)} events -> {len(train_set)} train / {len(val_set)} val, "
           f"batch size {args.batch_size}")
 
+    shuffle_gen = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_set, batch_size=args.batch_size, follow_batch=["parton_x"],
-        shuffle=True, generator=torch.Generator().manual_seed(args.seed),
+        shuffle=True, generator=shuffle_gen, num_workers=args.workers,
     )
     val_loader = DataLoader(
         val_set, batch_size=args.batch_size, follow_batch=["parton_x"], shuffle=False,
+        num_workers=args.workers,
     )
 
     ARCH["n_slots"] = args.n_slots
@@ -155,39 +177,68 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     print(f"training {sum(p.numel() for p in model.parameters()):,} parameters, {args.epochs} epochs")
 
-    name = (f"gnn_attn{'abs' if args.absolute else 'rel'}_h{ARCH['hidden']}_k{args.n_slots}"
-            if args.model == "attention" else f"gnn_factorized_k{args.n_slots}")
-    run_dir = CHECKPOINTS / f"{name}_{datetime.now():%Y%m%d_%H%M%S}"
-    run_dir.mkdir(parents=True)
-    log_path = run_dir / "train_log.csv"
-    log_path.write_text("epoch,train_loss,val_loss,train_shape,val_shape,train_energy,val_energy\n")
+    loss_kwargs = dict(energy_weight=args.energy_weight, angle_weight=args.angle_weight,
+                       mass_weight=args.mass_weight)
+    best_val, since_best, start = float("inf"), 0, 1
+    if args.resume is not None:
+        run_dir = args.resume
+        last = torch.load(run_dir / "checkpoint_last.pt", map_location=device, weights_only=False)
+        model.load_state_dict(last["model_state_dict"])
+        optimizer.load_state_dict(last["optimizer_state_dict"])
+        shuffle_gen.set_state(last["shuffle_rng"])
+        torch.set_rng_state(last["torch_rng"])
+        best_val, since_best, start = last["best_val"], last["since_best"], last["epoch"] + 1
+        log_path = run_dir / "train_log.csv"
+        print(f"resuming {run_dir} at epoch {start} (best val so far {best_val:.4f})")
+    else:
+        name = (f"gnn_attn{'abs' if args.absolute else 'rel'}_h{ARCH['hidden']}_k{args.n_slots}"
+                if args.model == "attention" else f"gnn_factorized_k{args.n_slots}")
+        run_dir = CHECKPOINTS / f"{name}{args.tag}_{datetime.now():%Y%m%d_%H%M%S}"
+        run_dir.mkdir(parents=True)
+        saved_args = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items() if k != "resume"}
+        (run_dir / "run_args.json").write_text(json.dumps(saved_args, indent=2))
+        log_path = run_dir / "train_log.csv"
+        log_path.write_text("epoch,train_loss,val_loss,train_shape,val_shape,train_energy,val_energy"
+                            + (",train_mass,val_mass" if args.mass_weight > 0 else "") + "\n")
 
-    best_val = float("inf")
-    for epoch in range(1, args.epochs + 1):
-        train_loss, train_shape, train_energy = run_epoch(
-            train_loader, model, optimizer, device, train=True, energy_weight=args.energy_weight)
-        val_loss, val_shape, val_energy = run_epoch(
-            val_loader, model, optimizer, device, train=False, energy_weight=args.energy_weight)
+    epoch = start - 1
+    for epoch in range(start, args.epochs + 1):
+        train_loss, train_shape, train_energy, train_mass = run_epoch(
+            train_loader, model, optimizer, device, True, loss_kwargs)
+        val_loss, val_shape, val_energy, val_mass = run_epoch(
+            val_loader, model, optimizer, device, False, loss_kwargs)
 
         with log_path.open("a") as f:
             f.write(f"{epoch},{train_loss:.6f},{val_loss:.6f},{train_shape:.6f},{val_shape:.6f},"
-                    f"{train_energy:.3e},{val_energy:.3e}\n")
+                    f"{train_energy:.3e},{val_energy:.3e}"
+                    + (f",{train_mass:.6f},{val_mass:.6f}" if args.mass_weight > 0 else "") + "\n")
 
         if epoch == 1 or epoch % args.log_every == 0:
             print(f"  epoch {epoch:4d}  train {train_loss:.4f}  val {val_loss:.4f}  "
-                  f"(val shape {val_shape:.4f}, val energy {val_energy:.2e})")
+                  f"(val shape {val_shape:.4f}, val energy {val_energy:.2e}"
+                  + (f", val mass {val_mass:.4f}" if args.mass_weight > 0 else "") + ")", flush=True)
 
         if val_loss < best_val:
-            best_val = val_loss
+            best_val, since_best = val_loss, 0
             save_checkpoint(run_dir / "checkpoint_best.pt", epoch, model, optimizer,
                              train_loss, val_loss)
+        else:
+            since_best += 1
+        save_checkpoint(run_dir / "checkpoint_last.pt", epoch, model, optimizer, train_loss, val_loss,
+                        best_val=best_val, since_best=since_best,
+                        shuffle_rng=shuffle_gen.get_state(), torch_rng=torch.get_rng_state())
+        if args.patience and since_best >= args.patience:
+            print(f"  no val improvement for {args.patience} epochs, stopping at epoch {epoch}")
+            break
 
-    save_checkpoint(run_dir / "checkpoint_final.pt", args.epochs, model, optimizer,
+    save_checkpoint(run_dir / "checkpoint_final.pt", epoch, model, optimizer,
                      train_loss, val_loss)
 
     config = dict(
         seed=args.seed, val_fraction=args.val_fraction, epochs=args.epochs, lr=args.lr,
-        batch_size=args.batch_size, loss="matched_fraction", energy_weight=args.energy_weight, arch=ARCH,
+        batch_size=args.batch_size, loss="matched_fraction", energy_weight=args.energy_weight,
+        angle_weight=args.angle_weight, mass_weight=args.mass_weight, patience=args.patience,
+        epochs_run=epoch, arch=ARCH,
         n_train=len(train_set), n_val=len(val_set),
         hadron_json=str(args.hadron_json), parton_json=str(args.parton_json),
         max_events=args.max_events,

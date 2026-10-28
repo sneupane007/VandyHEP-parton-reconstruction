@@ -75,7 +75,47 @@ The loss is `matched_mse_loss` applied to the shape: a Hungarian match on (√z,
 - √z sits between z, where errors are dominated by the hardest parton, and log z, where they are dominated by the softest.
 - Checkpoints now store `arch_config["model"]`, and the loaders use `build_model()`. Older checkpoints load as `JetGNN`.
 
-Train it with `scripts/train_factorized.py --n-slots K`. The first runs (K = 24 and K = 32, 500 epochs, photon-vetoed data) are still running.
+Train it with `scripts/train_factorized.py --n-slots K`.
+
+## 4. Attention decoder, full sample, mass penalty
+
+**Attention decoder** (`models/attention.py`, `--model attention`). FactorizedJetGNN builds every slot from one pooled vector and predicts an "average jet": its predicted mass has no tail above ~120 GeV, although the hadron jet mass correlates 0.98 with the parton one. `AttentionJetGNN` has 735k parameters:
+
+- 3 multi-head GATv2 layers, 128 wide.
+- 3 transformer-decoder layers whose slot queries cross-attend to the hadron nodes.
+- With `relative=True` (the default), η and φ go in and come out as offsets from the pT-weighted hadron jet axis.
+
+The output is the same fraction × total-pT form as FactorizedJetGNN.
+
+**Full sample** (`scripts/convert_to_arrays.py`). The 100 vetoed seeds are 19 GB of JSON, almost all of it edge lists. The `.npz` keeps only the node features (about 40 MB), and `JetPairDataset` rebuilds the fully connected edges and their ΔR on access. These match the stored JSON edges to within 3e-7. Every script that takes `--hadron-json` accepts the `.npz`.
+
+- `data/veto_train.npz` holds seeds 101–190, 53.9k jets.
+- `data/veto_test.npz` holds seeds 191–200, 5985 jets, which no run trains on. `evaluate_test.py` scores any set of runs on it.
+
+**Loss options** (`matched_fraction_loss`; the defaults reproduce the earlier loss):
+
+- `--angle-weight pt` weights each parton's η/φ error by its pT fraction, as the EMD does.
+- `--mass-weight λ` adds λ·(log m_pred − log m_true)².
+
+`train_factorized.py` also gained `--patience`, `--workers`, `--tag` and `--resume <run_dir>`. A resumed run is bit-identical to an uninterrupted one.
+
+**Test-set results** (5985 held-out jets, best checkpoints; `results/test_*.txt`, mass plots in `results/jet_mass/`):
+
+| Attention, jet-axis coords | train jets | ln(EMD) | good | shape EMD | median Δm/m (16–84%) | mass corr |
+|---|---|---|---|---|---|---|
+| current loss | 6.7k | 3.11 | 89% | 0.025 | −23% (−40, −6) | 0.952 |
+| + pT-weighted angles | 6.7k | 3.12 | 93% | 0.025 | −37% (−60, −15) | 0.959 |
+| + mass 0.03 | 6.7k | 3.36 | 87% | 0.033 | +0.1% (−15, +17) | 0.968 |
+| + pT-weighted + mass 0.03 | 6.7k | 3.30 | 90% | 0.031 | −6% (−21, +11) | 0.962 |
+| current loss | 53.9k | 3.14 | 95% | 0.024 | −18% (−42, −2) | 0.969 |
+
+For comparison on the same test jets, FactorizedJetGNN K = 24 gets 4.15 / 42% / 0.074 / −33% / 0.71.
+
+- **Predicted jets are too narrow.** Without the mass term, every model comes out too narrow. A squared-error fit puts a soft parton whose position is uncertain near its expected position, which is close to the jet axis.
+- **Slot truncation is not the cause.** The 24 hardest partons carry more than 99.5% of the true mass.
+- **More data doesn't fix it either.** Going from 6.7k to 53.9k training jets improves the shape but barely moves the mass.
+- **The mass term removes the bias, at a small cost in per-jet EMD.** A deterministic per-jet prediction can't be optimal for both; a generative model that samples parton jets could be.
+- **pT-weighting the angles makes the mass worse.**
 
 ## Running it on ACCRE
 
@@ -85,6 +125,11 @@ bash parton_recon/data/generate/generate_data.sh         # build against LCG_108
 sbatch slurm/generate_veto_array.sbatch                  # 100 x 10k events -> data/raw_veto/
 .venv/bin/python scripts/merge_generated.py data/raw_veto data/veto6725 --max-events 6725
 sbatch -J fact_k24 slurm/train.sbatch scripts/train_factorized.py data/veto6725 --epochs 500
+sbatch slurm/convert.sbatch                              # -> data/veto_train.npz, data/veto_test.npz
+sbatch -J full slurm/train.sbatch scripts/train_factorized.py data/veto_train.npz --model attention \
+  --epochs 200 --patience 15 --workers 2 --mass-weight 0.03 --tag _full_m0.03
+.venv/bin/python repro/evaluate_test.py data/veto_test.npz results/test_x label=checkpoints/<run> [...]
+.venv/bin/python repro/jet_mass_plot.py checkpoints/<run>/checkpoint_best.pt data/veto_test.npz --all-events
 bash repro/make_plots.sh checkpoints/<run>/checkpoint_best.pt data/veto6725
 .venv/bin/python repro/energy_check.py checkpoints/<run>/checkpoint_best.pt data/veto6725
 ```
