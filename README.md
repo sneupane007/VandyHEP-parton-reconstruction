@@ -5,6 +5,11 @@ network.
 
 Data comes from Pythia 8. See `parton_recon/data/generate/`.
 
+**Oct 2026 updates (branch `rke/photon-veto-factorized`):** reproduction of the EMD/PCA plots on ACCRE,
+the photon-veto fix in the generator, the factorized and attention models, full-sample training, and a
+Sherpa hadronization cross-test. What changed, why, and step-by-step instructions are in
+[`repro/README.md`](repro/README.md).
+
 ## Status
 
 **Skeleton and a few scripts.** Directories exist with a stated purpose; few code, basic environment, few data for experimentation.

@@ -33,3 +33,8 @@ pythia8316/*
 
 # SLURM job logs
 slurm/logs/
+
+# Sherpa: built binary, integration cache, scratch test runs
+sherpa/sherpa_jets
+sherpa/integration/
+sherpa/test_*/
