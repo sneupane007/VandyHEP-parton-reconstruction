@@ -1,0 +1,5 @@
+5985 test events (data/veto_test.npz); true parton mass median 73.3 GeV, hadron-vs-parton mass corr 0.974
+run                                epoch  ln(EMD)    good   shape    pT r     dm/m         16-84% m corr
+Full 53.9k, current loss              48     3.14     95%   0.024   1.004   -0.183 [-0.42, -0.02]  0.969
+Full 53.9k + mass 0.03                23     3.24     91%   0.029   1.001   -0.015 [-0.15, +0.14]  0.971
+6.7k + mass 0.03                     130     3.36     87%   0.033   1.003   +0.001 [-0.15, +0.17]  0.968

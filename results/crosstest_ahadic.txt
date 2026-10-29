@@ -1,0 +1,6 @@
+5527 test events (data/sherpa_ahadic_test.npz); true parton mass median 75.0 GeV, hadron-vs-parton mass corr 0.972
+run                                epoch  ln(EMD)    good   shape    pT r     dm/m         16-84% m corr
+Ahadic-trained                        93     3.31     87%   0.030   1.001   -0.396 [-0.61, -0.14]  0.942
+Ahadic-trained + mass 0.03            66     3.90     64%   0.057   1.002   -0.088 [-0.28, +0.14]  0.954
+Lund-trained                         150     3.30     89%   0.030   1.000   -0.394 [-0.64, -0.15]  0.957
+Lund-trained + mass 0.03              38     3.56     71%   0.040   1.002   +0.043 [-0.19, +0.30]  0.955

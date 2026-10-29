@@ -14,7 +14,7 @@ Your original `JetGNN`, `matched_mse_loss`, `train.py` and `train2.py` are uncha
    - `AttentionJetGNN` adds a cross-attention slot decoder and jet-axis-relative coordinates (§4). This is the current best model.
 5. **Full sample:** a compact `.npz` data format (19 GB of JSON becomes about 40 MB), and a fixed held-out test set. See §4.
 6. **Loss options:** `--mass-weight` (jet-mass penalty) and `--angle-weight pt`. See §4.
-7. **Hadronization cross-test** with Sherpa: cluster vs Lund string with the same shower. In progress. See §5.
+7. **Hadronization cross-test** with Sherpa: cluster vs Lund string with the same shower. The models, with or without the mass penalty, show no measurable hadronization dependence at this jet pT. See §5.
 
 ## Where things are
 
@@ -91,6 +91,7 @@ bash sherpa/build.sh                        # builds sherpa/sherpa_jets
 bash sherpa/integrate.sh                    # one-off matrix-element integration (~30 s)
 sbatch sherpa/generate_array.sbatch         # 100 Ahadic + 100 Lund jobs x 10k events -> data/raw_sherpa/
 bash sherpa/after_generation.sh             # .npz per model + sanity table + the 4 cross-test trainings
+bash sherpa/evaluate_crosstest.sh           # score the 4 models on the Ahadic, Lund and Pythia test sets
 ```
 
 ## 1. Reproduction
@@ -198,7 +199,7 @@ For comparison on the same test jets, FactorizedJetGNN K = 24 gets 4.15 / 42% / 
 - **The mass term removes the bias, at a small cost in per-jet EMD.** A deterministic per-jet prediction can't be optimal for both; a generative model that samples parton jets could be.
 - **pT-weighting the angles makes the mass worse.**
 
-## 5. Hadronization cross-test with Sherpa (in progress)
+## 5. Hadronization cross-test with Sherpa
 
 **Why.** The mass penalty pulls predictions toward the generator's parton-level mass. Every supervised model inherits the generator's hadron → parton mapping, but the penalty might lean on it more. Since the goal is to apply this to data, we test it directly: train on one hadronization model and test on another.
 
@@ -212,7 +213,48 @@ For comparison on the same test jets, FactorizedJetGNN K = 24 gets 4.15 / 42% / 
 - **Trainings** (`sherpa/after_generation.sh`): {Ahadic, Lund} × {current loss, mass 0.03}, each on 6725 jets. Each is tested on the Ahadic, Lund and Pythia test sets.
 - **The key number** is how much each model degrades on the other hadronization model, with and without the mass penalty.
 
-Results will be added here.
+**Generation.**
+
+- All 100 Ahadic jobs completed. 40 of the 100 Lund jobs crashed (34 killed, 2 segfaults, 4 fatal errors), roughly once per 20k events in the Sherpa → Pythia 8 string interface. Memory was normal (about 100 MB).
+- Failed jobs are dropped whole, so the only events missing are the crash-triggering ones, about 5 in 100k.
+- The Lund sample is 30.1k training jets (54 seeds) and 3359 test jets (6 seeds). The Ahadic sample is 49.6k training and 5527 test jets.
+
+**Sanity check** (test sets; median multiplicity, median and mean jet mass in GeV, median leading-constituent pT fraction):
+
+| sample | level | mult | mass med | mass mean | lead z |
+|---|---|---|---|---|---|
+| Sherpa Ahadic | parton | 8 | 75.0 | 92.1 | 0.635 |
+| Sherpa Lund | parton | 8 | 73.7 | 92.9 | 0.627 |
+| Sherpa Ahadic | hadron | 50 | 80.4 | 98.5 | 0.243 |
+| Sherpa Lund | hadron | 47 | 77.8 | 98.7 | 0.250 |
+| Pythia (main214) | parton | 15 | 73.3 | 91.2 | 0.518 |
+| Pythia (main214) | hadron | 51 | 76.8 | 94.6 | 0.237 |
+
+- **The two Sherpa samples agree at parton level** within statistics, as they should with one shower, and differ only at hadron level.
+- **Sherpa's parton level has about half Pythia's multiplicity** and a harder leading parton, because of a different shower cutoff. So the Pythia test set below changes the parton-level definition, not just the hadronization.
+
+**Results** (attention model, jet-axis coordinates, 6725 training jets; median ln(EMD) / shape EMD / median Δm/m with 16–84% band; full tables in `results/crosstest_*.txt`, mass plots in `results/crosstest_mass/`):
+
+| trained on | loss | tested on Ahadic | tested on Lund | tested on Pythia |
+|---|---|---|---|---|
+| Ahadic | current | 3.31 / 0.030 / −40% (−61, −14) | 3.30 / 0.030 / −40% (−63, −15) | 3.29 / 0.030 / −45% (−64, −19) |
+| Ahadic | + mass 0.03 | 3.90 / 0.057 / −9% (−28, +14) | 3.90 / 0.058 / −9% (−28, +15) | 3.87 / 0.056 / −12% (−31, +6) |
+| Lund | current | 3.30 / 0.030 / −39% (−64, −15) | 3.29 / 0.030 / −41% (−65, −16) | 3.28 / 0.031 / −45% (−67, −20) |
+| Lund | + mass 0.03 | 3.56 / 0.040 / +4% (−19, +30) | 3.54 / 0.039 / +4% (−18, +28) | 3.47 / 0.037 / +1% (−21, +20) |
+
+- **No hadronization dependence at this pT.** Every model scores the same on the cluster and string test sets: Δ ln(EMD) ≤ 0.02 and Δ(Δm/m) ≤ 1%. A model trained on one hadronization model does just as well on the other, with or without the mass penalty. So the penalty does not tie the model to its training sample's hadronization.
+- **This is expected at 800 GeV.** The hadronization shift of the jet mass is small here: the hadron-level masses differ by about 3%, about 2.6 GeV. The cross-test should be repeated at lower jet pT, where hadronization corrections grow.
+- **The two mass-penalty models differ from each other** (−9% vs +4%), but each one is the same on both test sets. So the difference is run-to-run training variation, not hadronization. The mass-penalty runs stopped early (epochs 66 and 38) and are less stable than the current-loss runs (epochs 93 and 150). Several seeds per setting would pin down that spread.
+- **On the Pythia test set**, the mass bias moves by 3–5 points for the current loss. That's mostly the different parton-level definition (shower cutoff), not hadronization.
+
+**Full sample + mass penalty** (Pythia, 53.9k training jets, Pythia test set; `results/test_full_mass.txt`, `results/jet_mass/full_54k_mass003.png`):
+
+| model | ln(EMD) | good | shape EMD | Δm/m (16–84%) | mass corr |
+|---|---|---|---|---|---|
+| 53.9k, current loss | 3.14 | 95% | 0.024 | −18% (−42, −2) | 0.969 |
+| 53.9k + mass 0.03 | 3.24 | 91% | 0.029 | −1.5% (−15, +14) | 0.971 |
+
+The full sample shrinks the cost of the mass penalty: shape EMD rises from 0.024 to 0.029 here, against 0.025 → 0.033 on 6.7k jets. That makes it the current best model overall.
 
 ## Other changes
 
