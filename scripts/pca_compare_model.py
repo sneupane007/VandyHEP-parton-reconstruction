@@ -11,6 +11,8 @@ Run from the repo root:
 
 Same val split as train.py/evaluate.py (match --val-fraction and --seed to the training run).
 
+Also saves each event's pt_mean (GeV) against its PC1 score as <out>_pt_mean_vs_pc1.png.
+
 """
 
 import argparse
@@ -104,6 +106,19 @@ def corner_plot(scores, ratios, out_path):
     fig.savefig(out_path, dpi=150)
 
 
+def pt_mean_vs_pc1_plot(features, scores, ratios, out_path):
+    """Each event's raw pt_mean (GeV) against its PC1 score."""
+    f = FEATURES.index("pt_mean")
+    fig, ax = plt.subplots(figsize=(5, 4))
+    for name, color in LEVELS:
+        ax.scatter(scores[name][:, 0], features[name][:, f], s=6, alpha=0.4, color=color, label=name)
+    ax.set_xlabel(f"PC1 ({ratios[0]:.0%})")
+    ax.set_ylabel("pt_mean [GeV]")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+
+
 def main():
     args = parse_args()
     out_path = args.out or args.checkpoint.parent / "pca_corner.png"
@@ -129,6 +144,7 @@ def main():
     hadron = summaries([dataset.hadron[i]["node_features"] for i in idx])
     parton = summaries([dataset.parton[i]["node_features"] for i in idx])
     predicted = summaries(pred_events)
+    features = {name: x for (name, _), x in zip(LEVELS, [parton, predicted])}
 
     scaler = StandardScaler().fit(np.vstack([parton, predicted]))
     pca = PCA(n_components=N_COMPONENTS).fit(scaler.transform(np.vstack([parton, predicted])))
@@ -149,6 +165,10 @@ def main():
 
     corner_plot(scores, ratios, out_path)
     print(f"\nsaved plot to {out_path}")
+
+    pt_mean_path = out_path.with_stem(out_path.stem + "_pt_mean_vs_pc1")
+    pt_mean_vs_pc1_plot(features, scores, ratios, pt_mean_path)
+    print(f"saved plot to {pt_mean_path}")
 
 
 if __name__ == "__main__":
