@@ -7,7 +7,8 @@ Unlike experiment.py (a plumbing smoke test with no held-out data),
 
 this holds out a validation split and saves a checkpoint per checkpoints/README.md's convention: weights,
 optimizer state, epoch, and a copy of the run's config, in their own timestamped
-directory, plus a training log.
+directory, plus a training log and a loss plot (loss_curves.png, redrawn every --log-every
+epochs so it can be opened mid-run).
 
 Currently trains with slot_mse_loss under LogPt; switch transform and empty-slot target
 together with the TRANSFORM, PAD_PT toggle below. The chamfer_set_loss lines are commented
@@ -29,6 +30,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import matplotlib
+matplotlib.use("Agg")  # draw straight to file; no display needed (works on the server)
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch.utils.data import Subset
@@ -87,6 +91,28 @@ def save_checkpoint(path, epoch, model, optimizer, train_loss, val_loss):
         },
         path,
     )
+
+
+def plot_losses(path, train_losses, val_losses):
+    """Draw train and val loss for every epoch so far, overwriting `path`."""
+    epochs = range(1, len(train_losses) + 1)
+    fig, ax = plt.subplots(figsize=(7, 4), facecolor="#fcfcfb")
+    ax.set_facecolor("#fcfcfb")
+    ax.plot(epochs, train_losses, color="#2a78d6", lw=2, label="train")
+    ax.plot(epochs, val_losses, color="#eb6834", lw=2, label="val")
+    ax.set_yscale("log")
+    ax.yaxis.set_major_locator(matplotlib.ticker.LogLocator(subs=(1, 2, 5)))
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%g"))
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("loss per event")
+    ax.set_title(path.parent.name, loc="left", fontsize=10)
+    ax.grid(color="#e1e0d9", lw=0.5)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
 
 
 def run_epoch(loader, model, optimizer, device, train):
@@ -157,17 +183,23 @@ def main():
 
     log_path = run_dir / "train_log.csv"
     log_path.write_text("epoch,train_loss,val_loss\n")
+    # Redrawn every --log-every epochs, so it can be opened while the run is going.
+    plot_path = run_dir / "loss_curves.png"
+    train_losses, val_losses = [], []
 
     best_val = float("inf")
     for epoch in range(1, args.epochs + 1):
         train_loss = run_epoch(train_loader, model, optimizer, device, train=True)
         val_loss = run_epoch(val_loader, model, optimizer, device, train=False)
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
 
         with log_path.open("a") as f:
             f.write(f"{epoch},{train_loss:.6f},{val_loss:.6f}\n")
 
         if epoch == 1 or epoch % args.log_every == 0:
             print(f"  epoch {epoch:4d}  train {train_loss:.4f}  val {val_loss:.4f}")
+            plot_losses(plot_path, train_losses, val_losses)
 
         if val_loss < best_val:
             best_val = val_loss
@@ -176,6 +208,7 @@ def main():
 
     save_checkpoint(run_dir / "checkpoint_final.pt", args.epochs, model, optimizer,
                      train_loss, val_loss)
+    plot_losses(plot_path, train_losses, val_losses)
 
     print(f"\nbest val loss {best_val:.4f} (epoch of best checkpoint recorded inside it)")
     print(f"saved to {run_dir}")
